@@ -798,7 +798,8 @@ main{
       <button class="icon-btn sidebar-close" id="tabs-close" type="button" aria-label="Close tabs">✕</button>
     </div>
     <div class="tabs" id="detail-tabs">
-      <button class="tab active" onclick="showTab('registration', this)">Registration</button>
+      <button class="tab active" onclick="showTab('summary', this)">Summary</button>
+      <button class="tab" onclick="showTab('registration', this)">Registration</button>
       <button class="tab" onclick="showTab('competitions', this)">Competitions</button>
       <button class="tab" onclick="showTab('workshops', this)">Workshops</button>
       <button class="tab" onclick="showTab('schedule', this)">Schedule</button>
@@ -807,7 +808,7 @@ main{
       <button class="tab" onclick="showTab('flights', this)">Flights</button>
       <button class="tab" onclick="showTab('budget', this)">Budget</button>
       <button class="tab" onclick="showTab('todos', this)">To-Do</button>
-    </div>
+</div>
   </aside>
   <div class="detail-main">
     <div id="tab-content"></div>
@@ -967,7 +968,7 @@ function openEvent(id) {
   var tabs = document.querySelectorAll('#detail-tabs .tab');
   tabs.forEach(function(t) { t.classList.remove('active'); });
   tabs[0].classList.add('active');
-  showTab('registration', tabs[0]);
+  showTab('summary', tabs[0]);
 }
 
 // ============================================================
@@ -1076,7 +1077,8 @@ function showTab(tab, btn) {
     btn.classList.add('active');
   }
   var slot = document.getElementById('tab-content');
-  if (tab === 'registration') renderRegistration(slot);
+  if (tab === 'summary')      renderSummary(slot);
+  else if (tab === 'registration') renderRegistration(slot);
   else if (tab === 'competitions') renderCompetitions(slot);
   else if (tab === 'workshops')    renderWorkshops(slot);
   else if (tab === 'schedule')     renderSchedule(slot);
@@ -1141,6 +1143,151 @@ function showTab(tab, btn) {
     return _openEvent.apply(this, arguments);
   };
 })();
+
+
+// ============================================================
+// SUMMARY (read-only, condensed)
+// ============================================================
+function renderSummary(slot){
+  var events = DB.getEvents();
+  var evt = null;
+  for (var i=0;i<events.length;i++){ if (events[i].id === currentEventId){ evt = events[i]; break; } }
+  evt = evt || {};
+
+  // Pull single-record sections (your UI stores one record per event)
+  var reg = (DB.getRegistrations().filter(function(r){ return r.eventId === currentEventId; })[0]) || {};
+  var hotel = (DB.getHotel().filter(function(h){ return h.eventId === currentEventId; })[0]) || {};
+  var flights = (DB.getFlights().filter(function(f){ return f.eventId === currentEventId; })[0]) || {};
+
+  // Lists
+  var comps = DB.getComps().filter(function(c){ return c.eventId === currentEventId; });
+  var lessons = DB.getLessons().filter(function(l){ return l.eventId === currentEventId; });
+  var workshops = DB.getWorkshops().filter(function(w){ return w.eventId === currentEventId; });
+  var todos = DB.getTodos().filter(function(t){ return t.eventId === currentEventId; });
+  var openTodos = todos.filter(function(t){ return !t.complete; });
+
+  // Sort lists for "planned to do" display
+  comps.sort(function(a,b){ return (String(a.date||'') + String(a.startTime||'')).localeCompare(String(b.date||'') + String(b.startTime||'')); });
+  lessons.sort(function(a,b){ return (String(a.date||'') + String(a.startTime||'')).localeCompare(String(b.date||'') + String(b.startTime||'')); });
+  workshops.sort(function(a,b){ return (String(a.date||'') + String(a.startTime||'')).localeCompare(String(b.date||'') + String(b.startTime||'')); });
+
+  function yn(v){ return v ? 'Yes' : 'Not yet'; }
+
+  function line(label, value){
+    return '<div class="row"><div class="row-label">' + label + '</div><div class="row-val">' + (value || '—') + '</div></div>';
+  }
+
+  function smallMuted(text){
+    return '<div style="font-size:12px;color:var(--muted);margin-top:4px">' + text + '</div>';
+  }
+
+  function compLabel(c){
+    var s = esc(c.type || 'Competition');
+    if (c.division) s += ' — ' + esc(c.division);
+    // role/partner is useful but keep it short
+    var meta = [];
+    if (c.role) meta.push(esc(c.role));
+    if (c.partner) meta.push('with ' + esc(c.partner));
+    if (meta.length) s += ' <span style="color:var(--muted);font-weight:600">(' + meta.join(' · ') + ')</span>';
+    if (c.date){
+      s += ' <span style="color:var(--muted);font-weight:600">— ' + fmtDate(c.date) + (c.startTime ? ', ' + fmtTime(c.startTime) : '') + '</span>';
+    }
+    return s;
+  }
+
+  function lessonLabel(l){
+    var who = esc(l.instructor || 'Lesson');
+    var when = '';
+    if (l.date) when += fmtDate(l.date);
+    if (l.startTime) when += (when ? ', ' : '') + fmtTime(l.startTime);
+    return who + (when ? ' <span style="color:var(--muted);font-weight:600">— ' + when + '</span>' : '');
+  }
+
+  function workshopLabel(w){
+    var title = esc(w.title || 'Workshop');
+    var when = '';
+    if (w.date) when += fmtDate(w.date);
+    if (w.startTime) when += (when ? ', ' : '') + fmtTime(w.startTime);
+    return title + (when ? ' <span style="color:var(--muted);font-weight:600">— ' + when + '</span>' : '');
+  }
+
+  function listCard(title, itemsHtml, emptyText){
+    var html = '<div class="card">';
+    html += '<div class="card-title" style="margin-bottom:8px">' + title + '</div>';
+    if (itemsHtml) html += itemsHtml;
+    else html += '<div style="font-size:14px;color:var(--muted)">' + emptyText + '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  // --- Build Summary HTML ---
+  var html = '';
+
+  // Snapshot
+  html += '<div class="card">';
+  html += '<div class="card-title" style="margin-bottom:8px">Overview</div>';
+  html += line('Dates', (evt.startDate ? fmtDate(evt.startDate) : '—') + (evt.endDate && evt.endDate !== evt.startDate ? ' – ' + fmtDate(evt.endDate) : ''));
+  html += line('Location', esc(evt.location || '—'));
+  html += line('Status', esc(evt.status || '—'));
+  html += '</div>';
+
+  // Bookings
+  html += '<div class="card">';
+  html += '<div class="card-title" style="margin-bottom:8px">Bookings</div>';
+
+  // Registration
+  html += line('Registration', reg.purchased ? 'Purchased' : 'Not yet');
+  if (reg.purchased && reg.confirmation) html += smallMuted('Reg confirmation: ' + esc(reg.confirmation));
+
+  // Hotel
+  html += line('Hotel', hotel.booked ? 'Booked' : 'Not yet');
+  if (hotel.booked && hotel.confirmation) html += smallMuted('Hotel confirmation: ' + esc(hotel.confirmation));
+  if (hotel.booked && hotel.roommates) html += smallMuted('Roommates: ' + esc(hotel.roommates));
+
+  // Flights
+  html += line('Flights', flights.booked ? 'Booked' : 'Not yet');
+  if (flights.booked && flights.confirmation) html += smallMuted('Flight confirmation: ' + esc(flights.confirmation));
+
+  html += '</div>';
+
+  // Competitions list
+  var compItems = '';
+  comps.forEach(function(c){
+    compItems += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">' + compLabel(c) + '</div>';
+  });
+  if (compItems) compItems = compItems.replace(/border-bottom:1px solid var\(--border\);'\s*<\/div>\s*$/, "border-bottom:none'></div>");
+  html += listCard('Competitions', compItems, 'No competitions added yet.');
+
+  // Lessons list
+  var lessonItems = '';
+  lessons.forEach(function(l){
+    lessonItems += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">' + lessonLabel(l) + '</div>';
+  });
+  if (lessonItems) lessonItems = lessonItems.replace(/border-bottom:1px solid var\(--border\);'\s*<\/div>\s*$/, "border-bottom:none'></div>");
+  html += listCard('Lessons', lessonItems, 'No lessons scheduled.');
+
+  // Workshops list
+  var workshopItems = '';
+  workshops.forEach(function(w){
+    workshopItems += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">' + workshopLabel(w) + '</div>';
+  });
+  if (workshopItems) workshopItems = workshopItems.replace(/border-bottom:1px solid var\(--border\);'\s*<\/div>\s*$/, "border-bottom:none'></div>");
+  html += listCard('Workshops', workshopItems, 'No workshops added yet.');
+
+  // To-dos
+  var todoHtml = '';
+  if (openTodos.length){
+    todoHtml += '<div style="font-size:14px;color:var(--muted);margin-bottom:6px">' + openTodos.length + ' open</div>';
+    openTodos.slice(0,2).forEach(function(t){
+      todoHtml += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">• ' + esc(t.text || t.title || 'To-do') + '</div>';
+    });
+    todoHtml = todoHtml.replace(/border-bottom:1px solid var\(--border\);'\s*<\/div>\s*$/, "border-bottom:none'></div>");
+  }
+  html += listCard('To-Dos', todoHtml, 'No open to-dos.');
+
+  slot.innerHTML = html;
+}
+
 
 // ============================================================
 // REGISTRATION
